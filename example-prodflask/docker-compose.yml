@@ -1,0 +1,18 @@
+services:
+  challenge:
+    build: .
+    entrypoint: ["/bin/true"]
+    networks:
+      - backend
+  front:
+    extends:
+      file: ../manager/docker-compose.yml
+      service: front
+    depends_on:
+      - challenge
+    networks:
+      - backend
+      - default
+networks:
+  backend:
+    internal: true
