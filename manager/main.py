@@ -48,7 +48,7 @@ use_internal_network = int(getenv("hackergame_use_internal_network", "0"))
 cpus = float(getenv("hackergame_cpus", "0.2"))
 # disk_limit = getenv("hackergame_disk_limit", "4G")
 HOST_PREFIX = os.environ["hackergame_host_prefix"]
-PROB_PATH = os.environ["hackergame_prob_path"]
+CHAL_PATH = os.environ["hackergame_chal_path"]
 stdlog = int(getenv("hackergame_stdout_log", "0"))
 # useinit = int(getenv("hackergame_use_init", "1"))
 external_proxy_port = int(getenv("hackergame_external_proxy_port", "0"))
@@ -121,9 +121,9 @@ def start_docker(uid, token):
     )
     if use_network:
         assert not use_internal_network
-        cmd += "--network problem "
+        cmd += "--network challenge "
     elif use_internal_network:
-        cmd += "--network problem_internal "
+        cmd += "--network challenge_internal "
     else:
         cmd += "--network none "
     if readonly:
@@ -292,7 +292,7 @@ class HTTPReverseProxy(StreamRequestHandler):
                         self.closeRequestWithInfo(
                             redirectPage.replace(
                                 "DOCKERURL",
-                                "https://" + HOST_PREFIX + ghost + DOMAIN + PROB_PATH,
+                                "https://" + HOST_PREFIX + ghost + DOMAIN + CHAL_PATH,
                             )
                         )
                         return
@@ -308,7 +308,7 @@ class HTTPReverseProxy(StreamRequestHandler):
                             + HOST_PREFIX
                             + ghost
                             + DOMAIN
-                            + PROB_PATH,
+                            + CHAL_PATH,
                         }
                         code = 502
                         try:
@@ -317,7 +317,7 @@ class HTTPReverseProxy(StreamRequestHandler):
                             )
                             client = httpx.Client(transport=transport)
                             r = client.get(
-                                "http://" + HOST_PREFIX + ghost + DOMAIN + PROB_PATH,
+                                "http://" + HOST_PREFIX + ghost + DOMAIN + CHAL_PATH,
                                 timeout=1,
                                 follow_redirects=False,
                             )
@@ -335,14 +335,14 @@ class HTTPReverseProxy(StreamRequestHandler):
             if dockerinfo != None:
                 ghost = dockerinfo["host"]
                 self.closeRequestWithRedirect(
-                    "https://" + HOST_PREFIX + ghost + DOMAIN + PROB_PATH, "Redirecting"
+                    "https://" + HOST_PREFIX + ghost + DOMAIN + CHAL_PATH, "Redirecting"
                 )
                 return
             dockerinfo = db.get_container_by_uid(uid)
             if dockerinfo != None:
                 ghost = dockerinfo["host"]
                 self.closeRequestWithRedirect(
-                    "https://" + HOST_PREFIX + ghost + DOMAIN + PROB_PATH, "Redirecting"
+                    "https://" + HOST_PREFIX + ghost + DOMAIN + CHAL_PATH, "Redirecting"
                 )
                 return
             self.closeRequestWithInfo("Docker not found")

@@ -20,7 +20,7 @@ services:
       - hackergame_challenge_docker_name=${challenge_docker_name}
       - hackergame_data_dir=${data_dir}
       - hackergame_host_prefix=${host_prefix}
-      - hackergame_prob_path=${prob_path}
+      - hackergame_chal_path=${chal_path}
       - hackergame_mount_points=${mount_points}
       - hackergame_readonly=${readonly}
       - hackergame_use_network=${use_network}

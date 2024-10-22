@@ -35,8 +35,8 @@
 - conn_interval 为用户发送容器管理类请求的频率限制。
 - challenge_timeout 为容器过期时间。此时间是以上一次访问（数据交换）为参照。即用户在一段时间内没有数据交换后会自动删除容器。
 - challenge_docker_name 为题目实例容器镜像名。在默认的 docker-compose 文件下，建议设为"当前目录名_challenge"。
-- prob_path 为题目实例开启后跳转到的 URI。实例状态检测也是使用此 URI。项目中钦定使用 HTTPS。
-- use_network 为是否开启网络访问。注意，若选择开启，项目的 main.py 中会直接指定使用 problem 网络。这是为了便于配置防火墙。如果有其他需求，请自行修改 start_docker 函数相关代码，以及 docker-compose.yml 网络相关部分。
+- chal_path 为题目实例开启后跳转到的 URI。实例状态检测也是使用此 URI。项目中钦定使用 HTTPS。
+- use_network 为是否开启网络访问。注意，若选择开启，项目的 main.py 中会直接指定使用 challenge 网络。这是为了便于配置防火墙。如果有其他需求，请自行修改 start_docker 函数相关代码，以及 docker-compose.yml 网络相关部分。
 - disk_limit 为容器实例存储使用限制。注意，这个功能可用依赖于 Docker 数据目录使用的文件系统。具体配置请上网自行查询。如果不需要请自行修改 start_docker 函数关于 --storage-opt 的代码。
 - stdout_log 为是否记录题目实例的输出。开启后将会把题目输出的内容作为实例日志存到数据存储目录下。
 - external_proxy_port 为使用题目服务提供的 socat 代理时的端口号。通常配置为题目所需要暴露的端口号。如果为 0 则表示不需要题目服务的 socat。
