@@ -153,7 +153,7 @@ def start_docker(uid, token):
     for fsrc, fdst in mount_points:
         cmd += f"-v {fsrc}:{fdst} "
     if external_proxy_port:
-        cmd += f"-v {data_dir}/vol/socat:/socat:ro "
+        cmd += f"-v {data_dir}/vol/gocat:/gocat:ro "
     cmd += challenge_docker_name
     logging.info(cmd)
     os.system("mkdir -p /vol/sock/" + subdomain)
@@ -168,8 +168,9 @@ def start_docker(uid, token):
         )  # todo: use better way to redirect logs
         time.sleep(0.1)
     if external_proxy_port:
+        # Set GOMAXPROCS to make sure it does not exceed pid limit
         os.system(
-            f"docker exec -d {child_docker_name} /socat UNIX-LISTEN:/sock/socat.sock,fork,reuseaddr TCP4:127.0.0.1:{external_proxy_port}"
+            f"docker exec --env GOMAXPROCS=4 -d {child_docker_name} /gocat tcp-to-unix --src 127.0.0.1:{external_proxy_port} --dst /sock/gocat.sock"
         )
         time.sleep(0.1)
 
@@ -313,7 +314,7 @@ class HTTPReverseProxy(StreamRequestHandler):
                         code = 502
                         try:
                             transport = httpx.HTTPTransport(
-                                uds="/vol/sock/" + ghost + "/socat.sock"
+                                uds="/vol/sock/" + ghost + "/gocat.sock"
                             )
                             client = httpx.Client(transport=transport)
                             r = client.get(
@@ -352,7 +353,7 @@ class HTTPReverseProxy(StreamRequestHandler):
         if dockerinfo == None:
             self.closeRequestWithInfo("Docker not found")
             return
-        sock_path = "/vol/sock/" + dockerinfo["host"] + "/socat.sock"
+        sock_path = "/vol/sock/" + dockerinfo["host"] + "/gocat.sock"
         # remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         # remote.connect(('192.168.192.102',80))
         self.lasttime = int(time.time())
@@ -452,7 +453,7 @@ if __name__ == "__main__":
     if not os.path.exists("/vol/logs"):
         os.mkdir("/vol/logs")
     if external_proxy_port:
-        os.system("cp /socat_static /vol/socat")
+        os.system("cp /gocat /vol/gocat")
     log_existing_docker()
     threading.Thread(target=autoclean).start()
     with ThreadingTCPServer(("0.0.0.0", 8080), HTTPReverseProxy) as server:

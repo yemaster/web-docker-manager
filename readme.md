@@ -1,5 +1,7 @@
 # GeekGame 动态 Web 类题目容器管理
 
+（Note：本仓库基于 web-docker-manager 项目的修改参见 [CHANGES.md](./CHANGES.md)）
+
 本项目是基于 Hackergame 的动态容器管理修改而来，基本用法可以参考[原项目](https://github.com/USTC-Hackergame/hackergame-challenge-docker)。
 
 项目附带的测试证书和原项目一致，但本项目使用的是 urlsafe-base64。你可以使用测试 Token： `1:MEUCIQCjK1QcPFro86w3bKPb5zUZZd96ocp3EZDFcwLtJxNNDAIgEPk3Orw0mE-zHLQA7e31kSFupNtG9uepz2H4EqxlKWY=`
