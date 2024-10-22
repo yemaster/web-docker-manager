@@ -1,11 +1,9 @@
-FROM ustclug/debian:10
+FROM ustclug/debian:12
 RUN apt update && apt -y upgrade && \
-    apt install -y xinetd python3-openssl docker.io python3-pip && \
+    apt install -y xinetd python3-openssl docker.io python3-requests python3-requests-unixsocket python3-httpx && \
     rm -rf /var/lib/apt/lists/*
-RUN pip3 install "requests<2.2.29" requests-unixsocket
 COPY main.py /
 COPY cert.pem /
-COPY flaglib.py /
 COPY db.py /
 COPY redirect.html /
 COPY socat /

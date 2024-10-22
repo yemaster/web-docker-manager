@@ -1,4 +1,3 @@
-version: '2'
 services:
   front:
     build: .
@@ -11,6 +10,7 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ${data_dir}/vol:/vol
     environment:
+      - hackergame_domain=.localhost.taoky.moe
       - hackergame_conn_interval=${conn_interval}
       - hackergame_challenge_timeout=${challenge_timeout}
       - hackergame_pids_limit=${pids_limit}
@@ -26,7 +26,6 @@ services:
       - hackergame_use_network=${use_network}
       - hackergame_use_internal_network=${use_internal_network}
       - hackergame_cpus=${cpus}
-      - hackergame_disk_limit=${disk_limit}
       - hackergame_stdout_log=${stdout_log}
       - hackergame_use_init=${use_init}
       - hackergame_external_proxy_port=${external_proxy_port}
