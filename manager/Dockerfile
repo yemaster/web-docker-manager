@@ -6,8 +6,6 @@ COPY main.py /
 COPY cert.pem /
 COPY db.py /
 COPY redirect.html /
-COPY socat /
-RUN chmod +x /socat
 COPY socat_static /
 RUN chmod +x /socat_static
 CMD ["python3", "main.py"]
