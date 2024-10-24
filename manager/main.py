@@ -52,6 +52,7 @@ CHAL_PATH = os.environ["hackergame_chal_path"]
 stdlog = int(getenv("hackergame_stdout_log", "0"))
 # useinit = int(getenv("hackergame_use_init", "1"))
 external_proxy_port = int(getenv("hackergame_external_proxy_port", "0"))
+rootless = int(getenv("hackergame_rootless", "0"))
 
 
 class ThreadingTCPServer(ThreadingMixIn, TCPServer):
@@ -145,7 +146,10 @@ def start_docker(uid, token):
                 break
         else:
             raise ValueError("Docker ID not found")
-    prefix = f"/var/lib/docker/containers/{docker_id}/mounts/shm/"
+    if not rootless:
+        prefix = f"/var/lib/docker/containers/{docker_id}/mounts/shm/"
+    else:
+        prefix = f"/home/rootless/.local/share/docker/containers/{docker_id}/mounts/shm/"
     for flag_path, fn in flag_files.items():
         flag_src_path = prefix + fn.split("/")[-1]
         cmd += f"-v {flag_src_path}:{flag_path}:rw "
