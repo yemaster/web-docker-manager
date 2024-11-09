@@ -17,15 +17,4 @@ if [[ -d /shared/run ]]; then
     chown rootless:rootless /shared/run
 fi
 
-/bin/bash -x <<EOF &
-while ! systemctl is-system-running; do
-    echo "systemd is not ready"
-    sleep 1
-done
-
-echo "systemd ready, enable linger on user rootless"
-loginctl enable-linger rootless
-
-EOF
-
 exec /lib/systemd/systemd
