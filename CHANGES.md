@@ -3,3 +3,6 @@
 - 所有 problem 均重命名为 challenge
 - 使用 gocat 替代 socat（使用 <https://github.com/taoky/gocat> 构建）
 - Rootless docker 支持（参见 example-bareflask）
+- 修改了 manager logging 配置
+- 处理了 stdlog 开启时的进程与文件描述符的泄漏问题
+- 处理了 /sock/ 的权限问题

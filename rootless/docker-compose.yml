@@ -1,0 +1,28 @@
+services:
+  systemd:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    cap_add:
+      - SYS_ADMIN
+      - NET_ADMIN
+    cgroup: private
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    tmpfs:
+      - /tmp
+      - /run
+      - /run/lock
+      - /var/lib/journal
+    stop_signal: SIGRTMIN+3
+    tty: true
+    security_opt:
+      - seccomp=seccomp.json
+      - apparmor=unconfined
+      - systempaths=unconfined
+    volumes:
+      - docker_data:/home/rootless/.local/share/docker
+      - ./run:/shared/run
+
+volumes:
+  docker_data:

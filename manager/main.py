@@ -16,9 +16,28 @@ import threading
 import json
 import httpx
 import subprocess
+import itertools
 
 
-logging.basicConfig(level=logging.DEBUG)
+# https://github.com/python/cpython/blob/a3443c0e22a8623afe4c0518433b28afbc3a6df6/Lib/http/server.py#L577
+_control_char_table = str.maketrans(
+        {c: fr'\x{c:02x}' for c in itertools.chain(range(0x20), range(0x7f,0xa0))})
+_control_char_table[ord('\\')] = r'\\'
+
+def sanitize_log(message: str) -> str:
+    return message.translate(_control_char_table)
+
+class SafeLogFilter(logging.Filter):
+    def filter(self, record):
+        record.msg = sanitize_log(str(record.msg))
+        return True
+
+logger = logging.getLogger(__name__)
+handler = logging.StreamHandler()
+handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s: %(message)s (L%(lineno)d)"))
+handler.addFilter(SafeLogFilter())
+logger.addHandler(handler)
+logger.setLevel(logging.DEBUG)
 
 
 def getenv(envn, default=""):
@@ -53,6 +72,10 @@ stdlog = int(getenv("hackergame_stdout_log", "0"))
 # useinit = int(getenv("hackergame_use_init", "1"))
 external_proxy_port = int(getenv("hackergame_external_proxy_port", "0"))
 rootless = int(getenv("hackergame_rootless", "0"))
+# extra_flag directly appends to "docker create ..."
+extra_flag = os.environ.get("hackergame_extra_flag", "")
+# append_token adds "?token=xxxxx" to url
+append_token = int(getenv("hackergame_append_token", "0"))
 
 
 class ThreadingTCPServer(ThreadingMixIn, TCPServer):
@@ -66,9 +89,8 @@ with open("cert.pem") as f:
 def validate(token):
     try:
         id, sig = token.split(":", 1)
-        sigr = base64.urlsafe_b64decode(sig)
-        assert sig == base64.urlsafe_b64encode(sigr).decode()
-        OpenSSL.crypto.verify(cert, sigr, id.encode(), "sha256")
+        sig = base64.b64decode(sig, validate=True)
+        OpenSSL.crypto.verify(cert, sig, id.encode(), "sha256")
         return id
     except Exception:
         return None
@@ -115,7 +137,7 @@ def start_docker(uid, token):
     os.environ["hackergame_cid_" + subdomain] = subdomain
     cmd = (
         f"docker run --init --rm -d "
-        f"--pids-limit {pids_limit} -m {mem_limit} --memory-swap -1 --cpus {cpus} "
+        f"--pids-limit {pids_limit} -m {mem_limit} --memory-swap {mem_limit} --cpus {cpus} "
         f"-e hackergame_token=$hackergame_token_{subdomain} "
         f"-e hackergame_host=$hackergame_host_{subdomain} "
         f"-e hackergame_cid=$hackergame_cid_{subdomain} "
@@ -129,6 +151,8 @@ def start_docker(uid, token):
         cmd += "--network none "
     if readonly:
         cmd += "--read-only "
+    if extra_flag:
+        cmd += extra_flag + " "
     # cmd += f"--storage-opt size={disk_limit} "
 
     # new version docker-compose uses "-" instead of "_" in the image name, so we try both
@@ -149,32 +173,41 @@ def start_docker(uid, token):
     if not rootless:
         prefix = f"/var/lib/docker/containers/{docker_id}/mounts/shm/"
     else:
-        prefix = f"/home/rootless/.local/share/docker/containers/{docker_id}/mounts/shm/"
+        prefix = (
+            f"/home/rootless/.local/share/docker/containers/{docker_id}/mounts/shm/"
+        )
     for flag_path, fn in flag_files.items():
         flag_src_path = prefix + fn.split("/")[-1]
-        cmd += f"-v {flag_src_path}:{flag_path}:rw "
+        cmd += f"-v {flag_src_path}:{flag_path}:ro "
     cmd += f"-v {data_dir}/vol/sock/{subdomain}:/sock "
     for fsrc, fdst in mount_points:
         cmd += f"-v {fsrc}:{fdst} "
     if external_proxy_port:
         cmd += f"-v {data_dir}/vol/gocat:/gocat:ro "
     cmd += challenge_docker_name
-    logging.info(cmd)
+    logger.info(cmd)
     os.system("mkdir -p /vol/sock/" + subdomain)
-    os.system("chmod 777 /vol/sock/" + subdomain)
+    os.system("chmod 755 /vol/sock/" + subdomain)
     os.system(cmd)
     time.sleep(0.1)
     if stdlog:
-        # use subprocess.Popen to redirect stdout and stderr backgroud to /vol/logs/{child_docker_name}.log
-        f = open(f"/vol/logs/{child_docker_name}.log", "wb")
-        subprocess.Popen(
-            f"docker logs -f {child_docker_name}", shell=True, stdout=f, stderr=f
-        )  # todo: use better way to redirect logs
+        # setsid is used to detach "docker logs ..." from our Python server to init
+        # so subprocess.run would not wait for docker logs here (which we don't want)
+        # Use subprocess.Popen solely would bring zombies on your lawn...
+        with open(f"/vol/logs/{child_docker_name}.log", "wb") as f:
+            subprocess.run(
+                ["setsid", "-f", "docker", "logs", "-f", child_docker_name], stdout=f, stderr=f
+            )  # todo: use better way to redirect logs
         time.sleep(0.1)
     if external_proxy_port:
         # Set GOMAXPROCS to make sure it does not exceed pid limit
-        os.system(
-            f"docker exec --env GOMAXPROCS=4 -d {child_docker_name} /gocat tcp-to-unix --src 127.0.0.1:{external_proxy_port} --dst /sock/gocat.sock"
+        # Also note that /sock is root-writable, so ALL CHALLENGE CONTAINERS SHALL NOT USE ROOT TO RUN!
+        # And here we set umask 066 to avoid the log being readable by players.
+        subprocess.run(
+            [
+                "docker", "exec", "--user", "root", "--env", "GOMAXPROCS=4", "-d", child_docker_name,
+                "sh", "-c", f"umask 066 && /gocat tcp-to-unix --src 127.0.0.1:{external_proxy_port} --dst /sock/gocat.sock > /sock/gocat.log 2>&1"
+            ]
         )
         time.sleep(0.1)
 
@@ -212,9 +245,19 @@ def generate_flag_files(flags):
 redirectPage = open("redirect.html").read()
 
 
+def construct_https_target_url(ghost, token, through_unix=False):
+    if not through_unix:
+        url = "https://" + HOST_PREFIX + ghost + DOMAIN + ":8443" + CHAL_PATH
+    else:
+        url = "http://" + HOST_PREFIX + ghost + DOMAIN + CHAL_PATH
+    if append_token:
+        url += "?token=" + urlparse.quote(token)
+    return url
+
+
 class HTTPReverseProxy(StreamRequestHandler):
     def handle(self):
-        logging.info("Accepting connection from %s:%s" % self.client_address)
+        logger.info("Accepting connection from %s:%s" % self.client_address)
         cont = self.connection.recv(4096)
         if not b"\r\n" in cont:
             self.server.close_request(self.request)
@@ -228,7 +271,7 @@ class HTTPReverseProxy(StreamRequestHandler):
             PATH = MethodLine[1].decode()
         except:
             self.closeRequestWithInfo("Invalid Path")
-            logging.info("Invalid Path")
+            logger.info("Invalid Path")
             return
         if not PATH.startswith("/"):
             self.closeRequestWithInfo("Invalid Path")
@@ -236,16 +279,16 @@ class HTTPReverseProxy(StreamRequestHandler):
         HOST = get_header(headers, b"host")
         if HOST is None:
             self.closeRequestWithInfo("Invalid Host")
-            logging.info("No Host header")
+            logger.info("No Host header")
             return
         try:
             HOST = HOST.decode("utf-8")
         except:
             self.closeRequestWithInfo("Invalid Host header")
-            logging.info("Invalid Host header")
+            logger.info("Invalid Host header")
             return
-        logging.info("Client Host:%s" % HOST)
-        logging.info("Client Path:%s" % PATH)
+        logger.info("Client Host:%s", HOST)
+        logger.info("Client Path:%s", PATH)
 
         if not HOST.startswith(HOST_PREFIX):
             self.closeRequestWithInfo("Invalid Host")
@@ -258,14 +301,14 @@ class HTTPReverseProxy(StreamRequestHandler):
             return
 
         if PATH.startswith("/docker-manager/"):
-            getpar = None
+            token = None
             uid = None
             try:
-                getpar = PATH.split("?", 1)[1]
-                getpar = urlparse.unquote(getpar)
-                logging.info("Get Token:%s" % getpar)
-                uid = validate(getpar)
-                logging.info("Get User:%s" % str(uid))
+                token = PATH.split("?", 1)[1]
+                token = urlparse.unquote(token)
+                logger.info("Get Token:%s", token)
+                uid = validate(token)
+                logger.info("Get User:%s", str(uid))
             except:
                 pass
             if PATH.startswith("/docker-manager/stop"):
@@ -291,13 +334,13 @@ class HTTPReverseProxy(StreamRequestHandler):
                                 % time.asctime(time.localtime(conn_interval + lasttime))
                             )
                             return
-                        start_docker(uid, getpar)
+                        start_docker(uid, token)
                         dockerinfo = db.get_container_by_uid(uid)
                         ghost = dockerinfo["host"]
                         self.closeRequestWithInfo(
                             redirectPage.replace(
                                 "DOCKERURL",
-                                "https://" + HOST_PREFIX + ghost + DOMAIN + CHAL_PATH,
+                                construct_https_target_url(ghost, token),
                             )
                         )
                         return
@@ -309,26 +352,23 @@ class HTTPReverseProxy(StreamRequestHandler):
                         obj = {
                             "status": 0,
                             "host": ghost,
-                            "url": "https://"
-                            + HOST_PREFIX
-                            + ghost
-                            + DOMAIN
-                            + CHAL_PATH,
+                            "url": construct_https_target_url(ghost, token),
                         }
                         code = 502
+                        uds = "/vol/sock/" + ghost + "/gocat.sock"
                         try:
-                            transport = httpx.HTTPTransport(
-                                uds="/vol/sock/" + ghost + "/gocat.sock"
-                            )
+                            transport = httpx.HTTPTransport(uds=uds)
                             client = httpx.Client(transport=transport)
                             r = client.get(
-                                "http://" + HOST_PREFIX + ghost + DOMAIN + CHAL_PATH,
+                                construct_https_target_url(
+                                    ghost, token, through_unix=True
+                                ),
                                 timeout=1,
                                 follow_redirects=False,
                             )
                             code = r.status_code
                         except Exception as e:
-                            logging.info(e)
+                            logger.exception("Connect to %s failed", uds)
                             code = 502
                         obj["code"] = code
                         self.closeRequestWithInfo(json.dumps(obj))
@@ -340,14 +380,14 @@ class HTTPReverseProxy(StreamRequestHandler):
             if dockerinfo != None:
                 ghost = dockerinfo["host"]
                 self.closeRequestWithRedirect(
-                    "https://" + HOST_PREFIX + ghost + DOMAIN + CHAL_PATH, "Redirecting"
+                    construct_https_target_url(ghost, token), "Redirecting"
                 )
                 return
             dockerinfo = db.get_container_by_uid(uid)
             if dockerinfo != None:
                 ghost = dockerinfo["host"]
                 self.closeRequestWithRedirect(
-                    "https://" + HOST_PREFIX + ghost + DOMAIN + CHAL_PATH, "Redirecting"
+                    construct_https_target_url(ghost, token), "Redirecting"
                 )
                 return
             self.closeRequestWithInfo("Docker not found")
@@ -424,12 +464,12 @@ def autoclean():
             cons = db.get_all_containers()
             for x in cons:
                 if int(time.time()) - x["last_time"] > challenge_timeout:
-                    logging.info(
-                        "Auto Clean:%s %s %s" % (x["cid"], x["uid"], x["host"])
+                    logger.info(
+                        "Auto Clean:%s %s %s", x["cid"], x["uid"], x["host"]
                     )
                     stop_docker(x["cid"])
         except Exception as e:
-            logging.info(e)
+            logger.exception("Auto clean failed")
 
 
 def log_existing_docker():
@@ -437,10 +477,11 @@ def log_existing_docker():
         dockerinfo = db.get_all_containers()
         for x in dockerinfo:
             child_docker_name = f"{challenge_docker_name[:-10]}_u{x['uid']}_{x['host']}"
-            f = open(f"/vol/logs/{child_docker_name}.log", "wb")
-            subprocess.Popen(
-                f"docker logs -f {child_docker_name}", shell=True, stdout=f, stderr=f
-            )
+            # docker logs -f output logs from the very beginning...
+            with open(f"/vol/logs/{child_docker_name}.log", "wb") as f:
+                subprocess.run(
+                    ["setsid", "-f", "docker", "logs", "-f", child_docker_name], stdout=f, stderr=f
+                )
 
 
 if __name__ == "__main__":
@@ -457,6 +498,8 @@ if __name__ == "__main__":
     if not os.path.exists("/vol/logs"):
         os.mkdir("/vol/logs")
     if external_proxy_port:
+        # It could be the case when /vol/gocat is running
+        # If checking system() return code here, it might report "Text file busy" error.
         os.system("cp /gocat /vol/gocat")
     log_existing_docker()
     threading.Thread(target=autoclean).start()

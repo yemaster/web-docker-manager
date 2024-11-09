@@ -10,4 +10,6 @@ RUN pip install --no-cache-dir --break-system-packages flask
 COPY example.py /
 COPY templates /templates
 
+USER nobody
+
 CMD [ "python3", "example.py" ]

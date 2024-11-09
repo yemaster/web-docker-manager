@@ -5,12 +5,13 @@ services:
       - ${port}:8080
     restart: always
     read_only: true
+    init: true
     ipc: shareable
     volumes:
       - ${docker_sock}:/var/run/docker.sock
       - ${data_dir}/vol:/vol
     environment:
-      - hackergame_domain=.localhost.taoky.moe
+      - hackergame_domain=.hack-challenge.lug.ustc.edu.cn
       - hackergame_conn_interval=${conn_interval}
       - hackergame_challenge_timeout=${challenge_timeout}
       - hackergame_pids_limit=${pids_limit}
@@ -22,7 +23,7 @@ services:
       - hackergame_host_prefix=${host_prefix}
       - hackergame_chal_path=${chal_path}
       - hackergame_mount_points=${mount_points}
-      - hackergame_readonly=${readonly}
+      - hackergame_readonly=${read_only}
       - hackergame_use_network=${use_network}
       - hackergame_use_internal_network=${use_internal_network}
       - hackergame_cpus=${cpus}
@@ -30,4 +31,6 @@ services:
       - hackergame_use_init=${use_init}
       - hackergame_external_proxy_port=${external_proxy_port}
       - hackergame_rootless=${rootless}
+      - hackergame_extra_flag=${extra_flag}
+      - hackergame_append_token=${append_token}
       - TZ=Asia/Shanghai

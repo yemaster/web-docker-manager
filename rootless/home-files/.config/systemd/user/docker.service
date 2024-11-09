@@ -1,0 +1,26 @@
+[Unit]
+Description=Docker Application Container Engine (Rootless)
+Documentation=https://docs.docker.com/go/rootless/
+Requires=dbus.socket
+
+[Service]
+Environment=PATH=/usr/bin:/sbin:/usr/sbin:/usr/local/bin:/usr/bin:/bin:/usr/local/games:/usr/games
+Environment=DOCKER_ALLOW_IPV6_ON_IPV4_INTERFACE=1
+ExecStart=/usr/bin/dockerd-rootless.sh -H unix:///shared/run/docker.sock
+ExecReload=/bin/kill -s HUP $MAINPID
+TimeoutSec=0
+RestartSec=2
+Restart=always
+StartLimitBurst=3
+StartLimitInterval=60s
+LimitNOFILE=infinity
+LimitNPROC=infinity
+LimitCORE=infinity
+TasksMax=infinity
+Delegate=yes
+Type=notify
+NotifyAccess=all
+KillMode=mixed
+
+[Install]
+WantedBy=default.target

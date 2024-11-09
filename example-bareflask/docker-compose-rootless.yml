@@ -1,0 +1,14 @@
+services:
+  docker:
+    extends:
+      file: ../rootless/docker-compose.yml
+      service: systemd
+    ports:
+      - 127.0.0.1:$port:$port
+    volumes:
+        - docker_data:/home/rootless/.local/share/docker
+        - ./run:/shared/run
+        - ${host_data_dir}/vol:${data_dir}
+
+volumes:
+  docker_data:
