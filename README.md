@@ -5,6 +5,11 @@ Note：
 - 本仓库基于 web-docker-manager 项目的修改参见 [CHANGES.md](./CHANGES.md)
 - 本地调试时，你可能需要一个解析到 127.0.0.1 的泛域名。
 
+Contributions:
+
+- 修改、调试与审计：@taoky
+- 基于 systemd 的 rootless dind：@rtxux
+
 ---
 
 本项目是基于 Hackergame 的动态容器管理修改而来，基本用法可以参考[原项目](https://github.com/USTC-Hackergame/hackergame-challenge-docker)。
