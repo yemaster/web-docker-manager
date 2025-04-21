@@ -6,6 +6,7 @@ COPY main.py /
 COPY cert.pem /
 COPY db.py /
 COPY redirect.html /
+COPY error.html /
 COPY gocat /
 RUN chmod +x /gocat
 CMD ["python3", "main.py"]
