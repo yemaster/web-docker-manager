@@ -103,6 +103,46 @@ def get_header(lines, header):
             return line.split(b":", 1)[1].strip()
     return None
 
+def parse_cookie(cookie):
+    cookie = cookie.split(";")
+    cookie_dict = {}
+    for c in cookie:
+        parts = c.strip().split("=", 1)
+        if len(parts) == 2:
+            k, v = parts
+            k = urlparse.unquote(k.strip())
+            v = urlparse.unquote(v.strip())
+            # 检查是否有附加信息
+            if ";" in v:
+                value_and_extra = v.split(";", 1)
+                main_value = value_and_extra[0]
+                extra_info = value_and_extra[1].split(";")
+                extra_dict = {}
+                for extra in extra_info:
+                    if "=" in extra:
+                        extra_k, extra_v = extra.split("=", 1)
+                        extra_dict[urlparse.unquote(extra_k.strip())] = urlparse.unquote(extra_v.strip())
+                cookie_dict[k] = {
+                    "value": main_value,
+                    "extra": extra_dict
+                }
+            else:
+                cookie_dict[k] = {
+                    "value": v,
+                    "extra": {}
+                }
+    return cookie_dict
+
+def gen_cookie_header(cookie={}):
+    if cookie:
+        cookie_str = "; ".join(
+            [f"{k}={v}" for k, v in cookie.items()]
+        )
+        cookie_header_line = f"Set-Cookie: {cookie_str}; Path=/; HttpOnly\r\n"
+    else:
+        cookie_header_line = ""
+    return cookie_header_line.encode()
+
 
 def stop_docker(cid):
     dockerinfo = db.get_container_by_cid(cid)
@@ -184,6 +224,7 @@ def start_docker(uid, token):
         cmd += f"-v {fsrc}:{fdst} "
     if external_proxy_port:
         cmd += f"-v {data_dir}/vol/gocat:/gocat:ro "
+    # cmd += "web-dynamic-example_challenge"
     cmd += challenge_docker_name
     logger.info(cmd)
     os.system("mkdir -p /vol/sock/" + subdomain)
@@ -243,7 +284,13 @@ def generate_flag_files(flags):
 
 
 redirectPage = open("redirect.html").read()
+errorPage = open("error.html").read()
 
+def construct_simple_target_url(host, token=""):
+    url = "http://" + host + CHAL_PATH
+    if token:
+        url = url + "?" + urlparse.quote(token)
+    return url
 
 def construct_https_target_url(ghost, token, through_unix=False):
     if not through_unix:
@@ -290,112 +337,152 @@ class HTTPReverseProxy(StreamRequestHandler):
         logger.info("Client Host:%s", HOST)
         logger.info("Client Path:%s", PATH)
 
-        if not HOST.startswith(HOST_PREFIX):
-            self.closeRequestWithInfo("Invalid Host")
+        token = None
+        uid = None
+        try:
+            _token = PATH.split("?", 1)[1]
+            _token = urlparse.unquote(_token)
+            logger.info("Get Token:%s", _token)
+            _uid = validate(_token)
+            logger.info("Get User:%s", str(_uid))
+
+            if _uid is not None:
+                uid = _uid
+                token = _token
+        except:
+            pass
+
+        need_set_cookie = False
+        COOKIE = get_header(headers, b"cookie")
+        logger.info("Get Cookie:%s", str(COOKIE))
+        if COOKIE is not None:
+            try:
+                cookie = parse_cookie(COOKIE.decode("utf-8"))
+                _uid = None
+                if "token" in cookie:
+                    _token = cookie["token"]["value"]
+                    logger.info("Get Token:%s", _token)
+                    _uid = validate(_token)
+                    logger.info("Get User:%s", str(_uid))
+                else:
+                    _uid = None
+                
+                if _uid is not None:
+                    uid = _uid
+                    token = _token
+                else:
+                    need_set_cookie = True
+            except Exception as e:
+                logger.exception("Parse cookie failed")
+                need_set_cookie = True
+        else:
+            need_set_cookie = True
+
+        if (token is None) or (uid is None):
+            self.closeRequestWithInfo(errorPage)
             return
 
-        try:
-            subdomain = HOST.split(".")[0][len(HOST_PREFIX) :]
-        except:
-            self.closeRequestWithInfo("Invalid Host")
-            return
+        response_cookie = { "token": token } if need_set_cookie else {}
+
+        # if not HOST.startswith(HOST_PREFIX):
+        #     self.closeRequestWithInfo("Invalid Host")
+        #     return
+
+        # try:
+        #     subdomain = HOST.split(".")[0][len(HOST_PREFIX) :]
+        # except:
+        #     self.closeRequestWithInfo("Invalid Host")
+        #     return
 
         if PATH.startswith("/docker-manager/"):
-            token = None
-            uid = None
-            try:
-                token = PATH.split("?", 1)[1]
-                token = urlparse.unquote(token)
-                logger.info("Get Token:%s", token)
-                uid = validate(token)
-                logger.info("Get User:%s", str(uid))
-            except:
-                pass
             if PATH.startswith("/docker-manager/stop"):
-                dockerinfo = db.get_container_by_host(subdomain)
-                if dockerinfo != None:
+                # dockerinfo = db.get_container_by_host(subdomain)
+                # if dockerinfo != None:
+                #     stop_docker(dockerinfo["cid"])
+                #     self.closeRequestWithInfo("Stopped")
+                #     return
+                dockerinfo = db.get_container_by_uid(uid)
+                if dockerinfo is not None:
                     stop_docker(dockerinfo["cid"])
-                    self.closeRequestWithInfo("Stopped")
+                    self.closeRequestWithInfo("Stopped", response_cookie)
                     return
-                if uid != None:
-                    dockerinfo = db.get_container_by_uid(uid)
-                    if dockerinfo != None:
-                        stop_docker(dockerinfo["cid"])
-                        self.closeRequestWithInfo("Stopped")
-                        return
             if PATH.startswith("/docker-manager/start"):
-                if uid != None:
-                    dockerinfo = db.get_container_by_uid(uid)
-                    if dockerinfo == None:
-                        lasttime = db.get_last_time(uid)
-                        if lasttime and time.time() - lasttime < conn_interval:
-                            self.closeRequestWithInfo(
-                                "Too frequent, please retry after %s"
-                                % time.asctime(time.localtime(conn_interval + lasttime))
-                            )
-                            return
-                        start_docker(uid, token)
-                        dockerinfo = db.get_container_by_uid(uid)
-                        ghost = dockerinfo["host"]
+                dockerinfo = db.get_container_by_uid(uid)
+                if dockerinfo is None:
+                    lasttime = db.get_last_time(uid)
+                    if lasttime and time.time() - lasttime < conn_interval:
                         self.closeRequestWithInfo(
-                            redirectPage.replace(
-                                "DOCKERURL",
-                                construct_https_target_url(ghost, token),
-                            )
+                            "Too frequent, please retry after %s"
+                            % time.asctime(time.localtime(conn_interval + lasttime)),
+                            response_cookie,
                         )
                         return
-            if PATH.startswith("/docker-manager/status"):
-                if uid != None:
+                    start_docker(uid, token)
                     dockerinfo = db.get_container_by_uid(uid)
-                    if dockerinfo != None:
-                        ghost = dockerinfo["host"]
-                        obj = {
-                            "status": 0,
-                            "host": ghost,
-                            "url": construct_https_target_url(ghost, token),
-                        }
+                    ghost = dockerinfo["host"]
+                    self.closeRequestWithInfo(
+                        redirectPage.replace(
+                            "DOCKERURL",
+                            # construct_https_target_url(ghost, token),
+                            construct_simple_target_url(HOST, token),
+                        ),
+                        response_cookie,
+                    )
+                    return
+            if PATH.startswith("/docker-manager/status"):
+                dockerinfo = db.get_container_by_uid(uid)
+                if dockerinfo is not None:
+                    ghost = dockerinfo["host"]
+                    obj = {
+                        "status": 0,
+                        "host": ghost,
+                        # "url": construct_https_target_url(ghost, token),
+                        "url": construct_simple_target_url(HOST, token),
+                    }
+                    code = 502
+                    uds = "/vol/sock/" + ghost + "/gocat.sock"
+                    try:
+                        transport = httpx.HTTPTransport(uds=uds)
+                        client = httpx.Client(transport=transport)
+                        r = client.get(
+                            # construct_https_target_url(
+                            #     ghost, token, through_unix=True
+                            # ),
+                            construct_simple_target_url(HOST),
+                            timeout=1,
+                            follow_redirects=False,
+                        )
+                        code = r.status_code
+                    except Exception as e:
+                        logger.exception("Connect to %s failed", uds)
                         code = 502
-                        uds = "/vol/sock/" + ghost + "/gocat.sock"
-                        try:
-                            transport = httpx.HTTPTransport(uds=uds)
-                            client = httpx.Client(transport=transport)
-                            r = client.get(
-                                construct_https_target_url(
-                                    ghost, token, through_unix=True
-                                ),
-                                timeout=1,
-                                follow_redirects=False,
-                            )
-                            code = r.status_code
-                        except Exception as e:
-                            logger.exception("Connect to %s failed", uds)
-                            code = 502
-                        obj["code"] = code
-                        self.closeRequestWithInfo(json.dumps(obj))
-                        return
-                    else:
-                        self.closeRequestWithInfo(json.dumps({"status": -1}))
-                        return
-            dockerinfo = db.get_container_by_host(subdomain)
-            if dockerinfo != None:
-                ghost = dockerinfo["host"]
-                self.closeRequestWithRedirect(
-                    construct_https_target_url(ghost, token), "Redirecting"
-                )
-                return
+                    obj["code"] = code
+                    self.closeRequestWithInfo(json.dumps(obj), response_cookie)
+                    return
+                else:
+                    self.closeRequestWithInfo(json.dumps({"status": -1}), response_cookie)
+                    return
+            # dockerinfo = db.get_container_by_host(subdomain)
+            # if dockerinfo != None:
+            #     ghost = dockerinfo["host"]
+            #     self.closeRequestWithRedirect(
+            #         construct_https_target_url(ghost, token), "Redirecting"
+            #     )
+            #     return
             dockerinfo = db.get_container_by_uid(uid)
-            if dockerinfo != None:
+            if dockerinfo is not None:
                 ghost = dockerinfo["host"]
                 self.closeRequestWithRedirect(
-                    construct_https_target_url(ghost, token), "Redirecting"
+                    construct_simple_target_url(HOST, token), "Redirecting", response_cookie
                 )
                 return
-            self.closeRequestWithInfo("Docker not found")
+            self.closeRequestWithInfo("Docker not found", response_cookie)
             return
 
-        dockerinfo = db.get_container_by_host(subdomain)
-        if dockerinfo == None:
-            self.closeRequestWithInfo("Docker not found")
+        # dockerinfo = db.get_container_by_host(subdomain)
+        dockerinfo = db.get_container_by_uid(uid)
+        if dockerinfo is None:
+            self.closeRequestWithInfo("Docker not found", response_cookie)
             return
         sock_path = "/vol/sock/" + dockerinfo["host"] + "/gocat.sock"
         # remote = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -411,10 +498,15 @@ class HTTPReverseProxy(StreamRequestHandler):
 
         self.server.close_request(self.request)
 
-    def closeRequestWithInfo(self, info):
+    def closeRequestWithInfo(self, info, cookie={}):
+        cookie_header_line = gen_cookie_header(cookie)
         dat = (
             b"HTTP/1.1 200 OK\r\n"
             + b"Content-Type: text/html\r\n"
+            + b"Content-Length: "
+            + str(len(info.encode())).encode()
+            + b"\r\n"
+            + cookie_header_line
             + b"Connection: close\r\n"
             + b"\r\n"
             + info.encode()
@@ -422,13 +514,17 @@ class HTTPReverseProxy(StreamRequestHandler):
         self.request.sendall(dat)
         self.server.close_request(self.request)
 
-    def closeRequestWithRedirect(self, url, info=""):
+    def closeRequestWithRedirect(self, url, info="", cookie={}):
         dat = (
             b"HTTP/1.1 302 Moved Temporatily\r\n"
             + b"Location: "
             + url.encode()
             + b"\r\n"
             + b"Content-Type: text/html\r\n"
+            + b"Content-Length: "
+            + str(len(info.encode())).encode()
+            + b"\r\n"
+            + gen_cookie_header(cookie)
             + b"Connection: close\r\n"
             + b"\r\n"
             + info.encode()
@@ -486,9 +582,9 @@ def log_existing_docker():
 
 if __name__ == "__main__":
     # Modern docker compose uses -challenge, so we just change name here.
-    if challenge_docker_name.endswith("_challenge"):
-        challenge_docker_name = challenge_docker_name[:-10] + "-challenge"
-    assert challenge_docker_name.endswith("-challenge")
+    #if challenge_docker_name.endswith("_challenge"):
+    #    challenge_docker_name = challenge_docker_name[:-10] + "-challenge"
+    #assert challenge_docker_name.endswith("-challenge")
     assert data_dir != ""
     if not os.path.exists("/vol/db"):
         os.mkdir("/vol/db")
@@ -507,3 +603,4 @@ if __name__ == "__main__":
         server.serve_forever()
 
 # TODO: Auto cleanup
+    autoclean()
